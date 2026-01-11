@@ -4,15 +4,10 @@ FROM python:3.11-slim as builder
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for building
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies (no build-essential needed - pure Python packages)
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Production stage
@@ -50,13 +45,7 @@ USER mcp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 -c "import asyncio; import sys; sys.path.insert(0, '/app/src'); from openproject_client import OpenProjectClient; \
-    async def check(): \
-        client = OpenProjectClient(); \
-        result = await client.test_connection(); \
-        await client.close(); \
-        exit(0 if result['success'] else 1); \
-    asyncio.run(check())" || exit 1
+    CMD curl -f http://localhost:8081/health || exit 1
 
 # Expose ports for MCP and status endpoints
 EXPOSE 8080 8081

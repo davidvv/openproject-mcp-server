@@ -8,25 +8,22 @@ services:
     container_name: openproject-mcp-server
     restart: unless-stopped
     
-    # Environment configuration
     environment:
       - OPENPROJECT_URL=${OPENPROJECT_URL:-http://host.docker.internal:8080}
       - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY}
+      - OPENPROJECT_HOST=${OPENPROJECT_HOST}
       - MCP_HOST=${MCP_HOST:-0.0.0.0}
       - MCP_PORT=${MCP_PORT:-8080}
       - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
     
-    # Port mapping (for HTTP transport and status endpoints)
     ports:
       - "${MCP_PORT:-39127}:8080"
-      - "39128:8081"
+      - "8082:8081"
     
-    # Volume mounts for persistence
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
     
-    # Resource limits
     deploy:
       resources:
         limits:
@@ -36,42 +33,28 @@ services:
           memory: 256M
           cpus: '0.25'
     
-    # Health check
     healthcheck:
-      test: ["CMD", "python3", "-c", "import asyncio; import sys; sys.path.insert(0, '/app/src'); from openproject_client import OpenProjectClient; async def check(): client = OpenProjectClient(); result = await client.test_connection(); await client.close(); exit(0 if result['success'] else 1); asyncio.run(check())"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     
-    # Network configuration
     networks:
       - mcp-network
-    
-    # Allow container to access host services
+      - openproject_frontend
+      - openproject_backend
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  # Optional: Add OpenProject service for development
-  # openproject:
-  #   image: openproject/community:13
-  #   container_name: openproject-dev
-  #   environment:
-  #     - OPENPROJECT_SECRET_KEY_BASE=your-secret-key-here
-  #     - OPENPROJECT_HOST__NAME=localhost:3000
-  #     - OPENPROJECT_HTTPS=false
-  #   ports:
-  #     - "3000:80"
-  #   volumes:
-  #     - openproject_data:/var/openproject/assets
-  #   networks:
-  #     - mcp-network
 
 networks:
   mcp-network:
     driver: bridge
+  openproject_frontend:
+    external: true
+  openproject_backend:
+    external: true
 
 volumes:
   openproject_data:
-
-

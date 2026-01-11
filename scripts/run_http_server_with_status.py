@@ -98,14 +98,30 @@ class StatusHandler(BaseHTTPRequestHandler):
             "mcp_tools": [
                 "health_check",
                 "create_project",
-                "create_work_package", 
+                "create_work_package",
                 "create_work_package_dependency",
                 "get_projects",
-                "get_work_packages"
+                "get_work_packages",
+                "update_work_package",
+                "get_users",
+                "assign_work_package_by_email",
+                "get_project_members",
+                "get_work_package_types",
+                "get_work_package_statuses",
+                "get_priorities",
+                "get_project_summary",
+                "get_work_package_relations",
+                "delete_work_package_relation",
+                "log_time_entry",
+                "get_time_entries",
+                "update_time_entry",
+                "delete_time_entry",
+                "get_time_activities",
+                "get_time_report"
             ],
             "ports": {
-                "mcp_sse": 39127,
-                "http_status": 39128
+                "mcp_sse": 8080,
+                "http_status": 8081
             }
         }
         

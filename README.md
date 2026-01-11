@@ -53,7 +53,7 @@ A comprehensive FastMCP-powered server that enables AI assistants like Claude to
 
 ### Configuration
 
-Edit the `.env` file with your OpenProject details:
+Edit the `.env` file with your OpenProject details. The file contains comprehensive documentation for each setting:
 
 ```env
 # OpenProject Instance URL (include protocol)
@@ -66,6 +66,11 @@ OPENPROJECT_API_KEY=your_40_character_api_key_here
 MCP_HOST=localhost
 MCP_PORT=8080
 MCP_LOG_LEVEL=INFO
+
+# Optional Performance Settings
+CACHE_TIMEOUT=300
+PAGINATION_SIZE=100
+MAX_RETRIES=3
 ```
 
 #### Getting your OpenProject API Key:
@@ -75,6 +80,27 @@ MCP_LOG_LEVEL=INFO
 3. Click **+ New token**
 4. Enter a name (e.g., "MCP Server")
 5. Copy the generated 40-character token
+
+#### Configuration Validation
+
+The MCP Server includes comprehensive validation that will provide helpful error messages if:
+
+- **OPENPROJECT_URL** is missing or invalid format
+- **OPENPROJECT_API_KEY** is missing or too short
+- **MCP_PORT** is outside valid range (1-65535)
+- **MCP_HOST** is not a recognized value
+- **MCP_LOG_LEVEL** is not a valid log level
+- Performance settings are outside recommended ranges
+
+If configuration errors occur, the server will fail to start with clear instructions on how to fix the issues.
+
+#### Docker Configuration
+
+When using Docker deployment, the `.env` file is automatically loaded. Ensure your `.env` file is in the same directory as your `docker-compose.yml` or Docker deployment script.
+
+For Docker containers, use:
+- `MCP_HOST=0.0.0.0` to accept connections from any IP
+- `MCP_PORT=8080` (internal container port, mapped to external port 8080)
 
 ### Testing
 
@@ -120,7 +146,7 @@ cp env.example .env
 # Edit .env with your OpenProject URL and API key
 
 # Deploy on specific port (IMPORTANT: Must match Claude Desktop config)
-./scripts/deploy.sh deploy 39127
+./scripts/deploy.sh deploy 8080
 
 # Alternative: Deploy on default port 8080
 ./scripts/deploy.sh deploy
@@ -157,13 +183,13 @@ cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
 **Step 2: Deploy on the SAME port as your MCP config**
 ```bash
 # Deploy on the port specified in your MCP config
-./scripts/deploy.sh deploy 39127
+./scripts/deploy.sh deploy 8080
 ```
 
 **Step 3: If port conflicts occur:**
 - Stop conflicting services: `docker stop container_using_port`
 - Or update BOTH MCP config AND deployment port consistently
-- Check what's using port: `docker ps | grep 39127`
+- Check what's using port: `docker ps | grep 8080`
 
 ### Manual Docker Commands
 
@@ -179,7 +205,7 @@ For advanced users who want full control:
    docker run -d \
      --name openproject-mcp-server \
      --env-file .env \
-     -p 39127:8080 \
+     -p 8080:8080 \
      -v ./logs:/app/logs \
      -v ./data:/app/data \
      --restart unless-stopped \
@@ -195,7 +221,7 @@ For advanced users who want full control:
    docker logs openproject-mcp-server
    
    # Test API endpoint (Note: No health endpoint in MCP server)
-   curl http://localhost:39127/sse
+   curl http://localhost:8080/sse
    ```
 
 ### Deployment Script Commands
@@ -204,7 +230,7 @@ The `scripts/deploy.sh` script provides comprehensive deployment management:
 
 ```bash
 # Deploy on standard MCP port (recommended)
-./scripts/deploy.sh deploy 39127
+./scripts/deploy.sh deploy 8080
 
 # Deploy on default port 8080 (may conflict with OpenProject)
 ./scripts/deploy.sh deploy
@@ -229,8 +255,8 @@ The `scripts/deploy.sh` script provides comprehensive deployment management:
 ```
 
 **💡 Port Selection Tips:**
-- **Port 39127**: Recommended MCP standard port, matches default config
-- **Port 8080**: Default HTTP port, but often conflicts with OpenProject
+- **Port 8080**: Standard HTTP port, recommended for MCP server
+- **Port 39127**: Alternative MCP standard port (if 8080 conflicts)
 - **Port 9876**: Good alternative, rarely conflicts
 - **Port 8090**: Common development port
 
@@ -245,7 +271,7 @@ OPENPROJECT_URL=http://localhost:8080
 # OpenProject API Key (from your user profile)
 OPENPROJECT_API_KEY=your_40_character_api_key_here
 
-# MCP Server Configuration (internal container port, mapped to 39127)
+# MCP Server Configuration (internal container port, mapped to 8080)
 MCP_HOST=0.0.0.0
 MCP_PORT=8080
 MCP_LOG_LEVEL=INFO
@@ -292,7 +318,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "openproject": {
       "transport": "sse",
-      "url": "http://localhost:39127/sse"
+      "url": "http://localhost:8080/sse"
     }
   }
 }
@@ -304,7 +330,7 @@ Add to your `claude_desktop_config.json`:
 - Use the full absolute path to the `run_server.py` script for Option 1
 - Ensure the Docker container is running before using Option 2
 - OPENPROJECT_URL should point to your OpenProject instance (typically port 8080)
-- MCP server URL (port 39127) is configured separately in the transport URL
+- MCP server URL (port 8080) is configured separately in the transport URL
 
 ### Usage Examples
 

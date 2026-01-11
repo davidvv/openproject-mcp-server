@@ -72,13 +72,24 @@ class OpenProjectClient:
         auth_string = base64.b64encode(f'apikey:{self.api_key}'.encode()).decode()
         
         # HTTP client configuration
+        # Use OPENPROJECT_HOST if provided, otherwise extract from URL
+        from urllib.parse import urlparse
+        if settings.openproject_host:
+            host_header = settings.openproject_host
+        else:
+            parsed_url = urlparse(self.base_url)
+            host_header = parsed_url.netloc
+
         self.client = httpx.AsyncClient(
             timeout=30.0,
             headers={
                 "Authorization": f"Basic {auth_string}",
                 "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
+                "Accept": "application/json",
+                "Host": host_header,
+                "X-Forwarded-Proto": "https"  # Prevent HTTP to HTTPS redirects
+            },
+            follow_redirects=True
         )
     
     async def _make_request(self, method: str, url: str, **kwargs) -> Dict[str, Any]:
@@ -151,6 +162,31 @@ class OpenProjectClient:
         url = f"/projects/{project_id}/work_packages"
         if use_pagination:
             return await self.get_paginated_results(url)
+        response = await self._make_request("GET", url)
+        return response.get("_embedded", {}).get("elements", [])
+    
+    async def search_work_packages(self, query: str, project_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Search work packages by subject or description.
+        
+        Args:
+            query: Search query string
+            project_id: Optional project ID to filter by project
+        
+        Returns:
+            List of matching work packages
+        """
+        import urllib.parse
+        
+        # Build filter for subject containing query
+        filters = [{"subject": {"operator": "~", "values": [query]}}]
+        
+        if project_id:
+            filters.append({"project": {"operator": "=", "values": [str(project_id)]}})
+        
+        # Encode filters as JSON and use as query param
+        filters_json = json.dumps(filters)
+        url = f"/work_packages?filters={urllib.parse.quote(filters_json)}"
+        
         response = await self._make_request("GET", url)
         return response.get("_embedded", {}).get("elements", [])
     
@@ -398,6 +434,130 @@ class OpenProjectClient:
             offset += page_size
         
         return all_results
+
+    async def get_time_entries(
+        self,
+        work_package_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get time entries with optional filters.
+
+        Args:
+            work_package_id: Filter by work package ID
+            project_id: Filter by project ID
+            user_id: Filter by user ID
+            from_date: Filter entries from this date (YYYY-MM-DD)
+            to_date: Filter entries to this date (YYYY-MM-DD)
+        """
+        # Build filter query
+        filters = []
+        if work_package_id:
+            filters.append(f'{{"work_package": {{"operator": "=", "values": ["{work_package_id}"]}}}}')
+        if project_id:
+            filters.append(f'{{"project": {{"operator": "=", "values": ["{project_id}"]}}}}')
+        if user_id:
+            filters.append(f'{{"user": {{"operator": "=", "values": ["{user_id}"]}}}}')
+        if from_date:
+            filters.append(f'{{"spent_on": {{"operator": ">=d", "values": ["{from_date}"]}}}}')
+        if to_date:
+            filters.append(f'{{"spent_on": {{"operator": "<=d", "values": ["{to_date}"]}}}}')
+
+        url = "/time_entries"
+        if filters:
+            filter_str = "[" + ",".join(filters) + "]"
+            response = await self._make_request("GET", url, params={"filters": filter_str})
+        else:
+            response = await self._make_request("GET", url)
+
+        return response.get("_embedded", {}).get("elements", [])
+
+    async def get_time_entry_by_id(self, time_entry_id: int) -> Dict[str, Any]:
+        """Get a specific time entry by ID."""
+        return await self._make_request("GET", f"/time_entries/{time_entry_id}")
+
+    async def create_time_entry(
+        self,
+        work_package_id: int,
+        hours: float,
+        spent_on: str,
+        comment: str = "",
+        activity_id: int = 1
+    ) -> Dict[str, Any]:
+        """Create a new time entry.
+
+        Args:
+            work_package_id: ID of the work package to log time against
+            hours: Hours spent (decimal, e.g., 2.5 for 2 hours 30 minutes)
+            spent_on: Date when work was done (YYYY-MM-DD format)
+            comment: Description of work done
+            activity_id: Activity type ID (default: 1)
+        """
+        payload = {
+            "hours": f"PT{hours}H",  # ISO 8601 duration format
+            "spentOn": spent_on,
+            "_links": {
+                "workPackage": {
+                    "href": f"/api/v3/work_packages/{work_package_id}"
+                },
+                "activity": {
+                    "href": f"/api/v3/time_entries/activities/{activity_id}"
+                }
+            }
+        }
+
+        if comment:
+            payload["comment"] = {"raw": comment}
+
+        return await self._make_request("POST", "/time_entries", json=payload)
+
+    async def update_time_entry(
+        self,
+        time_entry_id: int,
+        hours: Optional[float] = None,
+        spent_on: Optional[str] = None,
+        comment: Optional[str] = None,
+        activity_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Update an existing time entry.
+
+        Args:
+            time_entry_id: ID of the time entry to update
+            hours: New hours value
+            spent_on: New date
+            comment: New comment
+            activity_id: New activity ID
+        """
+        payload = {}
+
+        if hours is not None:
+            payload["hours"] = f"PT{hours}H"
+
+        if spent_on is not None:
+            payload["spentOn"] = spent_on
+
+        if comment is not None:
+            payload["comment"] = {"raw": comment}
+
+        if activity_id is not None:
+            if "_links" not in payload:
+                payload["_links"] = {}
+            payload["_links"]["activity"] = {
+                "href": f"/api/v3/time_entries/activities/{activity_id}"
+            }
+
+        return await self._make_request("PATCH", f"/time_entries/{time_entry_id}", json=payload)
+
+    async def delete_time_entry(self, time_entry_id: int) -> Dict[str, Any]:
+        """Delete a time entry."""
+        return await self._make_request("DELETE", f"/time_entries/{time_entry_id}")
+
+    async def get_time_activities(self) -> List[Dict[str, Any]]:
+        """Get available time entry activities (e.g., Development, Testing, Management)."""
+        response = await self._make_request("GET", "/time_entries/activities")
+        return response.get("_embedded", {}).get("elements", [])
 
     async def close(self):
         """Close the HTTP client."""

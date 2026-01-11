@@ -137,3 +137,73 @@ class WorkPackageRelationCreateRequest(BaseModel):
         return v
 
 
+class TimeEntry(BaseModel):
+    """Time entry data model."""
+    id: Optional[int] = None
+    hours: float = Field(..., gt=0, description="Hours spent (must be positive)")
+    comment: Optional[str] = Field(default="", description="Comment about the work done")
+    spent_on: str = Field(..., description="Date when the time was spent (YYYY-MM-DD)")
+    work_package_id: int = Field(..., gt=0, description="Work package ID this time is logged against")
+    project_id: Optional[int] = Field(default=None, description="Project ID (usually derived from work package)")
+    activity_id: Optional[int] = Field(default=None, description="Activity ID (e.g., development, testing)")
+    user_id: Optional[int] = Field(default=None, description="User ID who logged the time")
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TimeEntryCreateRequest(BaseModel):
+    """Request model for creating a time entry."""
+    hours: float = Field(..., gt=0, description="Hours spent (must be positive)")
+    comment: Optional[str] = Field(default="", description="Comment about the work done")
+    spent_on: str = Field(..., description="Date when the time was spent (YYYY-MM-DD)")
+    work_package_id: int = Field(..., gt=0, description="Work package ID to log time against")
+    activity_id: Optional[int] = Field(default=1, description="Activity ID (default: 1)")
+
+    @validator('spent_on')
+    def validate_date_format(cls, v):
+        """Validate date format is YYYY-MM-DD."""
+        if v is not None:
+            try:
+                datetime.strptime(v, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError("Date must be in YYYY-MM-DD format")
+        return v
+
+    @validator('hours')
+    def validate_hours(cls, v):
+        """Validate hours is reasonable (0.01 to 24 hours per entry)."""
+        if v <= 0:
+            raise ValueError("Hours must be positive")
+        if v > 24:
+            raise ValueError("Hours cannot exceed 24 per time entry")
+        return v
+
+
+class TimeEntryUpdateRequest(BaseModel):
+    """Request model for updating a time entry."""
+    hours: Optional[float] = Field(default=None, gt=0, description="Hours spent")
+    comment: Optional[str] = Field(default=None, description="Comment about the work done")
+    spent_on: Optional[str] = Field(default=None, description="Date when the time was spent (YYYY-MM-DD)")
+    activity_id: Optional[int] = Field(default=None, description="Activity ID")
+
+    @validator('spent_on')
+    def validate_date_format(cls, v):
+        """Validate date format is YYYY-MM-DD."""
+        if v is not None:
+            try:
+                datetime.strptime(v, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError("Date must be in YYYY-MM-DD format")
+        return v
+
+    @validator('hours')
+    def validate_hours(cls, v):
+        """Validate hours is reasonable."""
+        if v is not None:
+            if v <= 0:
+                raise ValueError("Hours must be positive")
+            if v > 24:
+                raise ValueError("Hours cannot exceed 24 per time entry")
+        return v
+
+

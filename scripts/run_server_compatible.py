@@ -18,6 +18,7 @@ if __name__ == "__main__":
     # Print startup message
     print("🚀 Starting OpenProject MCP Server (Python 3.9 Compatible)", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
+    print(f"Server will be available on port 8080", file=sys.stderr)
     
     # Run the server
     try:

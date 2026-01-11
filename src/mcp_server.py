@@ -23,6 +23,33 @@ openproject_client = OpenProjectClient()
 resource_handler = ResourceHandler(openproject_client)
 
 
+# Status name to ID mapping for easier updates
+STATUS_NAME_TO_ID = {
+    "new": 1,
+    "in specification": 2,
+    "specified": 3,
+    "confirmed": 4,
+    "to be scheduled": 5,
+    "scheduled": 6,
+    "in progress": 7,
+    "developed": 8,
+    "in testing": 9,
+    "tested": 10,
+    "test failed": 11,
+    "closed": 12,
+    "on hold": 13,
+    "rejected": 14,
+}
+
+def _resolve_status_id(status: Optional[int | str]) -> Optional[int]:
+    """Resolve status to ID. Accepts status ID (int) or status name (str)."""
+    if status is None:
+        return None
+    if isinstance(status, int):
+        return status
+    return STATUS_NAME_TO_ID.get(str(status).lower())
+
+
 # Add health check tool for MCP
 @app.tool()
 async def health_check() -> str:
@@ -488,6 +515,68 @@ async def get_work_packages(project_id: int) -> str:
 
 
 @app.tool()
+async def search_work_packages(query: str, project_id: Optional[int] = None) -> str:
+    """Search work packages by subject or description.
+    
+    Args:
+        query: Search query string to match against subject or description
+        project_id: Optional project ID to filter search to a specific project
+    
+    Returns:
+        JSON string with list of matching work packages
+    """
+    try:
+        if not query or len(query.strip()) < 2:
+            return json.dumps({
+                "success": False,
+                "error": "Search query must be at least 2 characters"
+            })
+        
+        if project_id is not None and project_id <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Project ID must be a positive integer if provided"
+            })
+        
+        work_packages = await openproject_client.search_work_packages(query.strip(), project_id)
+        
+        wp_list = []
+        for wp in work_packages:
+            wp_list.append({
+                "id": wp.get("id"),
+                "subject": wp.get("subject"),
+                "description": wp.get("description", {}).get("raw", "")[:200] + "..." if wp.get("description", {}).get("raw", "") and len(wp.get("description", {}).get("raw", "")) > 200 else wp.get("description", {}).get("raw", ""),
+                "project": wp.get("_links", {}).get("project", {}).get("title", "Unknown"),
+                "project_id": int(wp.get("_links", {}).get("project", {}).get("href", "").split("/")[-1]) if wp.get("_links", {}).get("project", {}).get("href") else None,
+                "start_date": wp.get("startDate"),
+                "due_date": wp.get("dueDate"),
+                "status": wp.get("_links", {}).get("status", {}).get("title", "Unknown"),
+                "assignee": wp.get("_links", {}).get("assignee", {}).get("title", "Unassigned"),
+                "url": f"{settings.openproject_url}/work_packages/{wp.get('id')}"
+            })
+        
+        return json.dumps({
+            "success": True,
+            "message": f"Found {len(wp_list)} work packages matching '{query}'" + (f" in project {project_id}" if project_id else ""),
+            "query": query,
+            "project_id": project_id,
+            "work_packages": wp_list
+        }, indent=2)
+        
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
 async def update_work_package(
     work_package_id: int,
     subject: Optional[str] = None,
@@ -495,7 +584,8 @@ async def update_work_package(
     start_date: Optional[str] = None,
     due_date: Optional[str] = None,
     assignee_id: Optional[int] = None,
-    estimated_hours: Optional[float] = None
+    estimated_hours: Optional[float] = None,
+    status: Optional[int | str] = None
 ) -> str:
     """Update an existing work package.
     
@@ -507,6 +597,7 @@ async def update_work_package(
         due_date: New due date in YYYY-MM-DD format (optional)
         assignee_id: User ID to assign work package to (optional)
         estimated_hours: New estimated hours (optional)
+        status: Status ID (e.g., 12 for Closed) OR status name (e.g., "Closed", "In progress", "On hold") (optional)
     
     Returns:
         JSON string with update result
@@ -550,10 +641,31 @@ async def update_work_package(
         if estimated_hours:
             updates["estimatedTime"] = f"PT{estimated_hours}H"
         
+        if status:
+            resolved_status_id = _resolve_status_id(status)
+            if resolved_status_id is None:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Invalid status: '{status}'. Valid options: {', '.join(sorted(STATUS_NAME_TO_ID.keys()))}"
+                })
+            updates["_links"] = updates.get("_links", {})
+            updates["_links"]["status"] = {"href": f"/api/v3/statuses/{resolved_status_id}"}
+        
         if not updates:
             return json.dumps({
                 "success": False,
                 "error": "No updates provided. Specify at least one field to update."
+            })
+        
+        # Fetch current work package to get lockVersion
+        try:
+            current_wp = await openproject_client._make_request("GET", f"/work_packages/{work_package_id}")
+            lock_version = current_wp.get("lockVersion", 0)
+            updates["lockVersion"] = lock_version
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Could not fetch current work package: {str(e)}"
             })
         
         result = await openproject_client.update_work_package(work_package_id, updates)
@@ -1449,6 +1561,494 @@ Please provide analysis on:
                 "content": f"Error generating team workload analysis: {str(e)}"
             }
         ]
+
+
+# ============================================================================
+# TIME TRACKING TOOLS
+# ============================================================================
+
+@app.tool()
+async def log_time_entry(
+    work_package_id: int,
+    hours: float,
+    spent_on: str,
+    comment: str = "",
+    activity_id: int = 1
+) -> str:
+    """Log time spent working on a task/work package.
+
+    Args:
+        work_package_id: ID of the work package to log time against
+        hours: Hours spent (decimal, e.g., 2.5 for 2 hours 30 minutes)
+        spent_on: Date when work was done (YYYY-MM-DD format)
+        comment: Description of work done (optional)
+        activity_id: Activity type ID - use get_time_activities to see available types (default: 1)
+
+    Returns:
+        JSON string with time entry creation result
+    """
+    try:
+        if work_package_id <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Work package ID must be a positive integer"
+            })
+
+        if hours <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Hours must be positive"
+            })
+
+        if hours > 24:
+            return json.dumps({
+                "success": False,
+                "error": "Hours cannot exceed 24 per time entry. Split large entries across multiple days."
+            })
+
+        # Validate date format
+        if not _is_valid_date_format(spent_on):
+            return json.dumps({
+                "success": False,
+                "error": "Date must be in YYYY-MM-DD format"
+            })
+
+        result = await openproject_client.create_time_entry(
+            work_package_id=work_package_id,
+            hours=hours,
+            spent_on=spent_on,
+            comment=comment,
+            activity_id=activity_id
+        )
+
+        # Extract user info
+        user_info = result.get("_links", {}).get("user", {})
+        wp_info = result.get("_links", {}).get("workPackage", {})
+        activity_info = result.get("_links", {}).get("activity", {})
+
+        return json.dumps({
+            "success": True,
+            "message": f"Logged {hours} hours on {spent_on}",
+            "time_entry": {
+                "id": result.get("id"),
+                "hours": hours,
+                "spent_on": result.get("spentOn"),
+                "comment": result.get("comment", {}).get("raw", ""),
+                "work_package": {
+                    "id": work_package_id,
+                    "title": wp_info.get("title", "Unknown")
+                },
+                "user": user_info.get("title", "Unknown"),
+                "activity": activity_info.get("title", "Unknown"),
+                "created_at": result.get("createdAt"),
+                "url": f"{settings.openproject_url}/time_entries/{result.get('id')}"
+            }
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
+async def get_time_entries(
+    work_package_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None
+) -> str:
+    """Get time entries with optional filters.
+
+    Args:
+        work_package_id: Filter by work package ID (optional)
+        project_id: Filter by project ID (optional)
+        user_id: Filter by user ID (optional)
+        from_date: Get entries from this date onwards (YYYY-MM-DD, optional)
+        to_date: Get entries up to this date (YYYY-MM-DD, optional)
+
+    Returns:
+        JSON string with list of time entries
+    """
+    try:
+        # Validate date formats if provided
+        if from_date and not _is_valid_date_format(from_date):
+            return json.dumps({
+                "success": False,
+                "error": "from_date must be in YYYY-MM-DD format"
+            })
+
+        if to_date and not _is_valid_date_format(to_date):
+            return json.dumps({
+                "success": False,
+                "error": "to_date must be in YYYY-MM-DD format"
+            })
+
+        time_entries = await openproject_client.get_time_entries(
+            work_package_id=work_package_id,
+            project_id=project_id,
+            user_id=user_id,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        entry_list = []
+        total_hours = 0.0
+
+        for entry in time_entries:
+            # Parse hours from ISO 8601 duration format (PT8H)
+            hours_str = entry.get("hours", "PT0H")
+            hours = float(hours_str.replace("PT", "").replace("H", ""))
+            total_hours += hours
+
+            user_info = entry.get("_links", {}).get("user", {})
+            wp_info = entry.get("_links", {}).get("workPackage", {})
+            project_info = entry.get("_links", {}).get("project", {})
+            activity_info = entry.get("_links", {}).get("activity", {})
+
+            entry_list.append({
+                "id": entry.get("id"),
+                "hours": hours,
+                "spent_on": entry.get("spentOn"),
+                "comment": entry.get("comment", {}).get("raw", ""),
+                "user": user_info.get("title", "Unknown"),
+                "work_package": {
+                    "id": wp_info.get("href", "").split("/")[-1] if wp_info.get("href") else None,
+                    "title": wp_info.get("title", "Unknown")
+                },
+                "project": project_info.get("title", "Unknown"),
+                "activity": activity_info.get("title", "Unknown"),
+                "created_at": entry.get("createdAt"),
+                "updated_at": entry.get("updatedAt")
+            })
+
+        # Build filter description
+        filter_desc = []
+        if work_package_id:
+            filter_desc.append(f"work package {work_package_id}")
+        if project_id:
+            filter_desc.append(f"project {project_id}")
+        if user_id:
+            filter_desc.append(f"user {user_id}")
+        if from_date:
+            filter_desc.append(f"from {from_date}")
+        if to_date:
+            filter_desc.append(f"to {to_date}")
+
+        filter_msg = f" ({', '.join(filter_desc)})" if filter_desc else ""
+
+        return json.dumps({
+            "success": True,
+            "message": f"Found {len(entry_list)} time entries{filter_msg}",
+            "summary": {
+                "total_entries": len(entry_list),
+                "total_hours": round(total_hours, 2)
+            },
+            "time_entries": entry_list
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
+async def update_time_entry(
+    time_entry_id: int,
+    hours: Optional[float] = None,
+    spent_on: Optional[str] = None,
+    comment: Optional[str] = None,
+    activity_id: Optional[int] = None
+) -> str:
+    """Update an existing time entry.
+
+    Args:
+        time_entry_id: ID of the time entry to update
+        hours: New hours value (optional)
+        spent_on: New date (YYYY-MM-DD, optional)
+        comment: New comment (optional)
+        activity_id: New activity ID (optional)
+
+    Returns:
+        JSON string with update result
+    """
+    try:
+        if time_entry_id <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Time entry ID must be a positive integer"
+            })
+
+        if hours is not None and hours <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Hours must be positive"
+            })
+
+        if hours is not None and hours > 24:
+            return json.dumps({
+                "success": False,
+                "error": "Hours cannot exceed 24 per time entry"
+            })
+
+        if spent_on and not _is_valid_date_format(spent_on):
+            return json.dumps({
+                "success": False,
+                "error": "Date must be in YYYY-MM-DD format"
+            })
+
+        if not any([hours, spent_on, comment, activity_id]):
+            return json.dumps({
+                "success": False,
+                "error": "No updates provided. Specify at least one field to update."
+            })
+
+        result = await openproject_client.update_time_entry(
+            time_entry_id=time_entry_id,
+            hours=hours,
+            spent_on=spent_on,
+            comment=comment,
+            activity_id=activity_id
+        )
+
+        # Parse hours from result
+        hours_str = result.get("hours", "PT0H")
+        updated_hours = float(hours_str.replace("PT", "").replace("H", ""))
+
+        return json.dumps({
+            "success": True,
+            "message": f"Time entry {time_entry_id} updated successfully",
+            "time_entry": {
+                "id": result.get("id"),
+                "hours": updated_hours,
+                "spent_on": result.get("spentOn"),
+                "comment": result.get("comment", {}).get("raw", ""),
+                "updated_at": result.get("updatedAt")
+            }
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
+async def delete_time_entry(time_entry_id: int) -> str:
+    """Delete a time entry.
+
+    Args:
+        time_entry_id: ID of the time entry to delete
+
+    Returns:
+        JSON string with deletion result
+    """
+    try:
+        if time_entry_id <= 0:
+            return json.dumps({
+                "success": False,
+                "error": "Time entry ID must be a positive integer"
+            })
+
+        await openproject_client.delete_time_entry(time_entry_id)
+
+        return json.dumps({
+            "success": True,
+            "message": f"Time entry {time_entry_id} deleted successfully"
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
+async def get_time_activities() -> str:
+    """Get available time entry activity types (e.g., Development, Testing, Management).
+
+    Returns:
+        JSON string with list of available activities
+    """
+    try:
+        activities = await openproject_client.get_time_activities()
+
+        activity_list = []
+        for activity in activities:
+            activity_list.append({
+                "id": activity.get("id"),
+                "name": activity.get("name"),
+                "position": activity.get("position", 0),
+                "is_default": activity.get("default", False),
+                "is_active": activity.get("active", True)
+            })
+
+        return json.dumps({
+            "success": True,
+            "message": f"Found {len(activity_list)} time entry activities",
+            "activities": activity_list
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
+
+
+@app.tool()
+async def get_time_report(
+    project_id: Optional[int] = None,
+    work_package_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None
+) -> str:
+    """Get a time tracking report with statistics and breakdown.
+
+    Args:
+        project_id: Filter by project ID (optional)
+        work_package_id: Filter by work package ID (optional)
+        user_id: Filter by user ID (optional)
+        from_date: Report from this date (YYYY-MM-DD, optional)
+        to_date: Report to this date (YYYY-MM-DD, optional)
+
+    Returns:
+        JSON string with time tracking report
+    """
+    try:
+        # Validate dates
+        if from_date and not _is_valid_date_format(from_date):
+            return json.dumps({
+                "success": False,
+                "error": "from_date must be in YYYY-MM-DD format"
+            })
+
+        if to_date and not _is_valid_date_format(to_date):
+            return json.dumps({
+                "success": False,
+                "error": "to_date must be in YYYY-MM-DD format"
+            })
+
+        time_entries = await openproject_client.get_time_entries(
+            work_package_id=work_package_id,
+            project_id=project_id,
+            user_id=user_id,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        # Analyze time entries
+        total_hours = 0.0
+        by_user = {}
+        by_activity = {}
+        by_work_package = {}
+        by_date = {}
+
+        for entry in time_entries:
+            # Parse hours
+            hours_str = entry.get("hours", "PT0H")
+            hours = float(hours_str.replace("PT", "").replace("H", ""))
+            total_hours += hours
+
+            # Group by user
+            user_name = entry.get("_links", {}).get("user", {}).get("title", "Unknown")
+            by_user[user_name] = by_user.get(user_name, 0) + hours
+
+            # Group by activity
+            activity_name = entry.get("_links", {}).get("activity", {}).get("title", "Unknown")
+            by_activity[activity_name] = by_activity.get(activity_name, 0) + hours
+
+            # Group by work package
+            wp_info = entry.get("_links", {}).get("workPackage", {})
+            wp_title = wp_info.get("title", "Unknown")
+            by_work_package[wp_title] = by_work_package.get(wp_title, 0) + hours
+
+            # Group by date
+            spent_on = entry.get("spentOn", "Unknown")
+            by_date[spent_on] = by_date.get(spent_on, 0) + hours
+
+        # Build filter description
+        filter_desc = []
+        if project_id:
+            filter_desc.append(f"project {project_id}")
+        if work_package_id:
+            filter_desc.append(f"work package {work_package_id}")
+        if user_id:
+            filter_desc.append(f"user {user_id}")
+        if from_date:
+            filter_desc.append(f"from {from_date}")
+        if to_date:
+            filter_desc.append(f"to {to_date}")
+
+        filter_msg = f" ({', '.join(filter_desc)})" if filter_desc else ""
+
+        return json.dumps({
+            "success": True,
+            "message": f"Time tracking report{filter_msg}",
+            "summary": {
+                "total_entries": len(time_entries),
+                "total_hours": round(total_hours, 2),
+                "date_range": {
+                    "from": from_date or "all time",
+                    "to": to_date or "present"
+                }
+            },
+            "breakdown": {
+                "by_user": {user: round(hours, 2) for user, hours in sorted(by_user.items(), key=lambda x: x[1], reverse=True)},
+                "by_activity": {activity: round(hours, 2) for activity, hours in sorted(by_activity.items(), key=lambda x: x[1], reverse=True)},
+                "by_work_package": {wp: round(hours, 2) for wp, hours in sorted(by_work_package.items(), key=lambda x: x[1], reverse=True)[:10]},  # Top 10 work packages
+                "by_date": {date: round(hours, 2) for date, hours in sorted(by_date.items())}
+            }
+        }, indent=2)
+
+    except OpenProjectAPIError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"OpenProject API error: {e.message}",
+            "details": e.response_data
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }, indent=2)
 
 
 # Server is run directly via app.run() from the run_server.py script
