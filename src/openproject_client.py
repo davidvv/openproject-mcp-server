@@ -4,6 +4,7 @@ import base64
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import settings
 from models import Project, WorkPackage, ProjectCreateRequest, WorkPackageCreateRequest
 from utils.logging import get_logger, log_api_request, log_api_response, log_error
@@ -92,7 +93,13 @@ class OpenProjectClient:
             },
             follow_redirects=True
         )
-    
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
+        reraise=True
+    )
     async def _make_request(self, method: str, url: str, **kwargs) -> Dict[str, Any]:
         """Make HTTP request to OpenProject API."""
         full_url = f"{self.api_base}{url}"

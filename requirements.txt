@@ -5,3 +5,4 @@ pydantic>=2.0.0       # Data validation and serialization
 python-dotenv>=1.0.0  # Environment configuration management
 structlog>=23.0.0     # Structured logging
 rich>=13.0.0          # Rich terminal output
+tenacity>=8.0.0       # Retry/backoff logic for resilient API calls
