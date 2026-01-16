@@ -110,7 +110,7 @@ class OpenProjectClient:
                 error_data = {}
                 try:
                     error_data = response.json()
-                except:
+                except json.JSONDecodeError:
                     pass
                 
                 error = OpenProjectAPIError(
