@@ -1,14 +1,14 @@
 """FastMCP server for OpenProject integration."""
 import asyncio
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, cast, List
 from fastmcp import FastMCP
 from openproject_client import OpenProjectClient, OpenProjectAPIError
 from models import ProjectCreateRequest, WorkPackageCreateRequest, WorkPackageRelationCreateRequest
 from pydantic import ValidationError
 from config import settings
 from handlers.resources import ResourceHandler
-from utils.logging import get_logger, log_tool_execution, log_error
+from utils.logging import get_logger, log_tool_run, log_error
 
 logger = get_logger(__name__)
 
@@ -79,7 +79,7 @@ async def health_check() -> str:
                 "openproject_url": settings.openproject_url
             }
         
-        log_tool_execution(logger, "health_check", {}, result)
+        log_tool_run(logger, "health_check", True, result=result)
         return json.dumps(result, indent=2)
         
     except Exception as e:
@@ -279,11 +279,11 @@ async def create_work_package_dependency(
         
         # Call OpenProject API
         result = await openproject_client.create_work_package_relation(
-            relation_request.from_work_package_id, 
-            relation_request.to_work_package_id, 
-            relation_request.relation_type, 
-            relation_request.description, 
-            relation_request.lag
+            relation_request.from_work_package_id,
+            relation_request.to_work_package_id,
+            relation_request.relation_type,
+            relation_request.description or "",
+            relation_request.lag or 0
         )
         
         # Extract relation info from result
@@ -1465,7 +1465,7 @@ Please provide a structured breakdown that I can use to create the project in Op
 
 
 @app.prompt()
-async def team_workload_analysis(project_ids: list[int] = None) -> list:
+async def team_workload_analysis(project_ids: Optional[list[int]] = None) -> list:
     """Analyze team workload across projects.
     
     Args:
@@ -1478,11 +1478,13 @@ async def team_workload_analysis(project_ids: list[int] = None) -> list:
         # Get all projects if none specified
         if project_ids is None:
             projects = await openproject_client.get_projects()
-            project_ids = [p.get("id") for p in projects[:5]]  # Limit to first 5 for performance
-        
+            project_ids = cast(List[int], [p.get("id") for p in projects[:5] if p.get("id") is not None])  # Limit to first 5 for performance
+        else:
+            project_ids = cast(List[int], project_ids)
+
         workload_data = {}
         total_work_packages = 0
-        
+
         for project_id in project_ids:
             try:
                 work_packages = await openproject_client.get_work_packages(project_id)
@@ -1894,9 +1896,9 @@ async def delete_time_entry(time_entry_id: int) -> str:
 
 
 @app.tool()
-async def get_time_activities() -> str:
+async def get_time_activities(_placeholder: bool = False) -> str:
     """Get available time entry activity types (e.g., Development, Testing, Management).
-
+    
     Returns:
         JSON string with list of available activities
     """

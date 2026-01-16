@@ -9,7 +9,7 @@ from openproject_client import OpenProjectClient, OpenProjectAPIError
 from models import ProjectCreateRequest, WorkPackageCreateRequest
 from config import settings
 from handlers.resources import ResourceHandler
-from utils.logging import get_logger, log_tool_execution, log_error
+from utils.logging import get_logger, log_tool_run, log_error
 
 logger = get_logger(__name__)
 
@@ -84,7 +84,7 @@ class MCPServer:
                         "openproject_url": settings.openproject_url
                     }
                 
-                log_tool_execution(logger, "health_check", {}, result)
+                log_tool_run(logger, "health_check", True, result=result)
                 return json.dumps(result, indent=2)
                 
             except Exception as e:

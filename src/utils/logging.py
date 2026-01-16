@@ -2,7 +2,7 @@
 import structlog
 import logging
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 def configure_logging(log_level: str = "INFO") -> None:
@@ -86,13 +86,14 @@ def log_api_response(logger: structlog.BoundLogger, method: str, url: str, statu
     )
 
 
-def log_tool_execution(logger: structlog.BoundLogger, tool_name: str, success: bool, **kwargs: Any) -> None:
+def log_tool_run(logger: structlog.BoundLogger, tool_name: str, success: bool, *args: Any, **kwargs: Any) -> None:
     """Log tool execution with structured data.
     
     Args:
         logger: Structlog logger instance
         tool_name: Name of the executed tool
         success: Whether execution was successful
+        *args: Variable positional arguments (ignored)
         **kwargs: Additional context data
     """
     logger.info(
@@ -103,7 +104,7 @@ def log_tool_execution(logger: structlog.BoundLogger, tool_name: str, success: b
     )
 
 
-def log_error(logger: structlog.BoundLogger, error: Exception, context: Dict[str, Any] = None) -> None:
+def log_error(logger: structlog.BoundLogger, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
     """Log an error with structured data and context.
     
     Args:
