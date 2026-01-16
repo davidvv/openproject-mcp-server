@@ -1,7 +1,7 @@
 """Data models for OpenProject MCP Server."""
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Project(BaseModel):
@@ -67,7 +67,8 @@ class WorkPackageCreateRequest(BaseModel):
     due_date: Optional[str] = None
     estimated_hours: Optional[float] = None
 
-    @validator('start_date', 'due_date')
+    @field_validator('start_date', 'due_date', mode='before')
+    @classmethod
     def validate_date_format(cls, v):
         """Validate date format is YYYY-MM-DD."""
         if v is not None:
@@ -76,34 +77,36 @@ class WorkPackageCreateRequest(BaseModel):
             except ValueError:
                 raise ValueError("Date must be in YYYY-MM-DD format")
         return v
-    
-    @validator('due_date')
-    def validate_due_after_start(cls, v, values):
-        """Validate due date is after start date."""
-        if v and values.get('start_date'):
-            try:
-                start = datetime.strptime(values['start_date'], "%Y-%m-%d")
-                due = datetime.strptime(v, "%Y-%m-%d")
-                if due < start:
-                    raise ValueError("Due date must be after start date")
-            except ValueError as e:
-                if "Date must be in YYYY-MM-DD format" not in str(e):
-                    raise ValueError("Due date must be after start date")
-        return v
 
-    @validator('estimated_hours')
+    @field_validator('estimated_hours', mode='before')
+    @classmethod
     def validate_estimated_hours(cls, v):
         """Validate estimated hours is positive."""
         if v is not None and v <= 0:
             raise ValueError("Estimated hours must be positive")
         return v
 
-    @validator('parent_id')
-    def validate_parent_id(cls, v, values):
+    @field_validator('parent_id', mode='before')
+    @classmethod
+    def validate_parent_id(cls, v):
         """Validate parent ID is not the same as work package ID (can't validate at creation time)."""
         if v is not None and v <= 0:
             raise ValueError("Parent ID must be a positive integer")
         return v
+
+    @model_validator(mode='after')
+    def validate_due_after_start(self):
+        """Validate due date is after start date."""
+        if self.due_date and self.start_date:
+            try:
+                start = datetime.strptime(self.start_date, "%Y-%m-%d")
+                due = datetime.strptime(self.due_date, "%Y-%m-%d")
+                if due < start:
+                    raise ValueError("Due date must be after start date")
+            except ValueError as e:
+                if "Date must be in YYYY-MM-DD format" not in str(e):
+                    raise ValueError("Due date must be after start date")
+        return self
 
 
 class WorkPackageRelationCreateRequest(BaseModel):
@@ -114,14 +117,17 @@ class WorkPackageRelationCreateRequest(BaseModel):
     description: Optional[str] = Field(default="", description="Description of the relation")
     lag: Optional[int] = Field(default=0, description="Working days between finish of predecessor and start of successor")
 
-    @validator('to_work_package_id')
-    def validate_different_work_packages(cls, v, values):
+    @field_validator('to_work_package_id', mode='before')
+    @classmethod
+    def validate_different_work_packages(cls, v, info):
         """Validate that from and to work packages are different."""
-        if v and values.get('from_work_package_id') and v == values['from_work_package_id']:
+        from_work_package_id = info.data.get('from_work_package_id')
+        if v and from_work_package_id and v == from_work_package_id:
             raise ValueError("Work package cannot have a relation with itself")
         return v
 
-    @validator('relation_type')
+    @field_validator('relation_type', mode='before')
+    @classmethod
     def validate_relation_type(cls, v):
         """Validate relation type is supported."""
         valid_relations = ["follows", "precedes", "blocks", "blocked", "relates", "duplicates", "duplicated"]
@@ -129,7 +135,8 @@ class WorkPackageRelationCreateRequest(BaseModel):
             raise ValueError(f"Invalid relation type. Must be one of: {', '.join(valid_relations)}")
         return v
 
-    @validator('lag')
+    @field_validator('lag', mode='before')
+    @classmethod
     def validate_lag(cls, v):
         """Validate lag is non-negative."""
         if v is not None and v < 0:
@@ -159,7 +166,8 @@ class TimeEntryCreateRequest(BaseModel):
     work_package_id: int = Field(..., gt=0, description="Work package ID to log time against")
     activity_id: Optional[int] = Field(default=1, description="Activity ID (default: 1)")
 
-    @validator('spent_on')
+    @field_validator('spent_on', mode='before')
+    @classmethod
     def validate_date_format(cls, v):
         """Validate date format is YYYY-MM-DD."""
         if v is not None:
@@ -169,7 +177,8 @@ class TimeEntryCreateRequest(BaseModel):
                 raise ValueError("Date must be in YYYY-MM-DD format")
         return v
 
-    @validator('hours')
+    @field_validator('hours', mode='before')
+    @classmethod
     def validate_hours(cls, v):
         """Validate hours is reasonable (0.01 to 24 hours per entry)."""
         if v <= 0:
@@ -186,7 +195,8 @@ class TimeEntryUpdateRequest(BaseModel):
     spent_on: Optional[str] = Field(default=None, description="Date when the time was spent (YYYY-MM-DD)")
     activity_id: Optional[int] = Field(default=None, description="Activity ID")
 
-    @validator('spent_on')
+    @field_validator('spent_on', mode='before')
+    @classmethod
     def validate_date_format(cls, v):
         """Validate date format is YYYY-MM-DD."""
         if v is not None:
@@ -196,7 +206,8 @@ class TimeEntryUpdateRequest(BaseModel):
                 raise ValueError("Date must be in YYYY-MM-DD format")
         return v
 
-    @validator('hours')
+    @field_validator('hours', mode='before')
+    @classmethod
     def validate_hours(cls, v):
         """Validate hours is reasonable."""
         if v is not None:
@@ -205,5 +216,3 @@ class TimeEntryUpdateRequest(BaseModel):
             if v > 24:
                 raise ValueError("Hours cannot exceed 24 per time entry")
         return v
-
-
