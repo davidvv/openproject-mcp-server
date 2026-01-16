@@ -1,6 +1,12 @@
 # OpenProject MCP Server
 
-A comprehensive FastMCP-powered server that enables AI assistants like Claude to interact with OpenProject installations. This implementation provides full project management functionality including user management, dynamic configuration, and advanced Gantt chart creation.
+A comprehensive FastMCP-powered server that enables AI assistants like Claude to interact with OpenProject installations.
+
+**Maintained by:** [davidvv](https://github.com/davidvv)
+
+**License:** MIT - See [LICENSE](LICENSE) for details
+
+---
 
 ## 🎯 Core Features
 
