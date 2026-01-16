@@ -13,6 +13,40 @@ from utils.logging import get_logger, log_tool_run, log_error
 logger = get_logger(__name__)
 
 
+def _format_success_response(message: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Format a standardized success response."""
+    response = {"success": True, "message": message}
+    if data:
+        response.update(data)
+    return response
+
+
+def _format_error_response(error: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Format a standardized error response."""
+    response = {"success": False, "error": error}
+    if details:
+        response["details"] = details
+    return response
+
+
+def _format_health_response(
+    status: str,
+    message: str,
+    openproject_connected: bool,
+    openproject_version: Optional[str] = None,
+    error: Optional[str] = None
+) -> Dict[str, Any]:
+    """Format a standardized health check response."""
+    return {
+        "status": status,
+        "message": message,
+        "openproject_connection": "connected" if openproject_connected else "failed",
+        "openproject_version": openproject_version or "unknown",
+        "openproject_url": settings.openproject_url,
+        **( {"error": error} if error else {} )
+    }
+
+
 # Initialize FastMCP server with minimal output
 import os
 os.environ['FASTMCP_QUIET'] = '1'  # Try to suppress FastMCP banner
@@ -54,40 +88,38 @@ def _resolve_status_id(status: Optional[int | str]) -> Optional[int]:
 @app.tool()
 async def health_check() -> str:
     """Health check tool to verify OpenProject MCP Server is running and connected.
-    
+
     Returns:
         JSON string with server and OpenProject connection status
     """
     try:
-        # Test OpenProject connection
         connection_result = await openproject_client.test_connection()
-        
+
         if connection_result.get('success'):
-            result = {
-                "status": "healthy",
-                "message": "OpenProject MCP Server is currently running",
-                "openproject_connection": "connected",
-                "openproject_version": connection_result.get('openproject_version', 'unknown'),
-                "openproject_url": settings.openproject_url
-            }
+            result = _format_health_response(
+                status="healthy",
+                message="OpenProject MCP Server is currently running",
+                openproject_connected=True,
+                openproject_version=connection_result.get('openproject_version', 'unknown')
+            )
         else:
-            result = {
-                "status": "degraded", 
-                "message": "OpenProject MCP Server is running but OpenProject connection failed",
-                "openproject_connection": "failed",
-                "error": connection_result.get('message', 'Unknown connection error'),
-                "openproject_url": settings.openproject_url
-            }
-        
+            result = _format_health_response(
+                status="degraded",
+                message="OpenProject MCP Server is running but OpenProject connection failed",
+                openproject_connected=False,
+                error=connection_result.get('message', 'Unknown connection error')
+            )
+
         log_tool_run(logger, "health_check", True, result=result)
         return json.dumps(result, indent=2)
-        
+
     except Exception as e:
-        error_result = {
-            "status": "unhealthy",
-            "message": "OpenProject MCP Server encountered an error",
-            "error": str(e)
-        }
+        error_result = _format_health_response(
+            status="unhealthy",
+            message="OpenProject MCP Server encountered an error",
+            openproject_connected=False,
+            error=str(e)
+        )
         log_error(logger, e, {"tool": "health_check"})
         return json.dumps(error_result, indent=2)
 
