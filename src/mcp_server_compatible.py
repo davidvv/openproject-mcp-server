@@ -97,7 +97,7 @@ class MCPServer:
         """Register all MCP tools."""
         
         @self.tool
-        async def health_check() -> str:
+        async def health_check(_placeholder: bool = False) -> str:
             """Health check tool to verify OpenProject MCP Server is running and connected."""
             try:
                 connection_result = await openproject_client.test_connection()
@@ -393,7 +393,7 @@ class MCPServer:
                 }, indent=2)
         
         @self.tool
-        async def get_projects() -> str:
+        async def get_projects(_placeholder: bool = False) -> str:
             """Get list of all projects from OpenProject."""
             try:
                 projects = await openproject_client.get_projects()

@@ -86,9 +86,9 @@ def _resolve_status_id(status: Optional[int | str]) -> Optional[int]:
 
 # Add health check tool for MCP
 @app.tool()
-async def health_check() -> str:
+async def health_check(_placeholder: bool = False) -> str:
     """Health check tool to verify OpenProject MCP Server is running and connected.
-
+    
     Returns:
         JSON string with server and OpenProject connection status
     """
@@ -455,7 +455,7 @@ async def delete_work_package_relation(relation_id: int) -> str:
 
 
 @app.tool()
-async def get_projects() -> str:
+async def get_projects(_placeholder: bool = False) -> str:
     """Get list of all projects from OpenProject.
     
     Returns:
@@ -921,7 +921,7 @@ async def get_project_members(project_id: int) -> str:
 
 
 @app.tool()
-async def get_work_package_types() -> str:
+async def get_work_package_types(_placeholder: bool = False) -> str:
     """Get available work package types from OpenProject.
     
     Returns:
@@ -961,7 +961,7 @@ async def get_work_package_types() -> str:
 
 
 @app.tool()
-async def get_work_package_statuses() -> str:
+async def get_work_package_statuses(_placeholder: bool = False) -> str:
     """Get available work package statuses from OpenProject.
     
     Returns:
@@ -1002,7 +1002,7 @@ async def get_work_package_statuses() -> str:
 
 
 @app.tool()
-async def get_priorities() -> str:
+async def get_priorities(_placeholder: bool = False) -> str:
     """Get available work package priorities from OpenProject.
     
     Returns:
